@@ -1,0 +1,53 @@
+flowchart TB
+    subgraph AIM["① 决策层 · 全车型共享"]
+        direction TB
+        AC["AutoAimComponent · 自瞄决策<br/>component.cpp<br/>update()"]
+        FC["FireController · 火控解算（内部模块，无话题接口）<br/>fire_control.cpp<br/>接口=方法: update() 输入 / aim() 返回 Aimed"]
+    end
+
+    subgraph CTL["② 控制器层 · 三车共用"]
+        direction TB
+        FW["FrictionWheelController · 摩擦轮控制<br/>friction_wheel_controller.cpp<br/>update() · detect_bullet_fire()"]
+        HC["HeatController · 热量限制<br/>heat_controller.cpp<br/>update()"]
+        BF["BulletFeederController17mm · 拨弹总闸<br/>bullet_feeder_controller_17mm.cpp<br/>update() · update_jam_detection()"]
+    end
+
+    subgraph PIDL["③ PID 层 · 速度闭环"]
+        direction TB
+        PL["PidController · 左摩擦速度闭环<br/>pid_controller.cpp"]
+        PR["PidController · 右摩擦速度闭环<br/>pid_controller.cpp"]
+        PB["PidController · 拨弹速度闭环<br/>pid_controller.cpp"]
+    end
+
+    subgraph HWL["④ 硬件层 · 电机型号/ID 因车而异"]
+        direction TB
+        ML["DjiMotor · 左摩擦轮电机<br/>步兵id1·哨兵id2·无人机id3"]
+        MR["DjiMotor · 右摩擦轮电机<br/>步兵id2·哨兵id1·无人机id4"]
+        MB["DjiMotor · 拨弹盘电机<br/>M2006(步兵/无人机) · M3508(哨兵)"]
+    end
+
+    EXT["上游 · 相机 / 裁判 / 遥控 / 导航 / IMU"]
+    RC["遥控"]
+    REF["裁判"]
+
+    EXT --> AC
+    AC == "方法调用 update() · 喂状态(云台角/时间戳)" ==> FC
+    FC == "方法返回 aim() · 输出 Aimed 决策" ==> AC
+    AC -- "should_shoot 开火 / single_shoot 能量机关" --> BF
+    RC -- "开关 / V键" --> FW
+    REF -- "cooling 冷却 / heat_limit 热限" --> HC
+    FW -- "friction_ready 就绪 / bullet_fired 发弹" --> BF
+    FW -- "bullet_fired 发弹事件" --> HC
+    HC -- "limited_by_heat 可发弹数" --> BF
+    FW -- "control_velocity 目标转速" --> PL
+    FW -- "control_velocity 目标转速" --> PR
+    BF -- "control_velocity 拨弹速度" --> PB
+    PL -- "control_torque 扭矩" --> ML
+    PR -- "control_torque 扭矩" --> MR
+    PB -- "control_torque 扭矩" --> MB
+    ML -. "velocity 转速反馈" .-> PL
+    MR -. "velocity 转速反馈" .-> PR
+    MB -. "velocity 转速反馈" .-> PB
+    ML -. "velocity 转速反馈" .-> FW
+    MR -. "velocity 转速反馈" .-> FW
+    MB -. "velocity 转速反馈" .-> BF

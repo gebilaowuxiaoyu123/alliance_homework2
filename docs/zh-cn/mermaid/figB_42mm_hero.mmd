@@ -1,0 +1,67 @@
+flowchart TB
+    subgraph AIM2["① 决策层 · 全车型共享"]
+        direction TB
+        AC2["AutoAimComponent · 自瞄决策<br/>component.cpp<br/>update()"]
+        FC2["FireController · 火控解算（内部模块，无话题接口）<br/>fire_control.cpp<br/>接口=方法: update() 输入 / aim() 返回 Aimed"]
+    end
+
+    subgraph CTL2["② 控制器层 · 英雄专用"]
+        direction TB
+        FW2["HeroFrictionWheelController · 摩擦轮控制 ★6轮双档<br/>hero_friction_wheel_controller.cpp<br/>update() · target_friction_velocity()"]
+        HC2["HeroHeatController · 热量限制<br/>hero_heat_controller.cpp<br/>update()"]
+        PT["PutterController · 推杆+拨弹总闸 ★<br/>putter_controller.cpp<br/>update() · 三段状态机"]
+    end
+
+    subgraph PID2["③ PID 层 · 速度闭环"]
+        direction TB
+        P2["PidController · 摩擦轮速度闭环 ×6 ★<br/>pid_controller.cpp"]
+    end
+
+    subgraph HWL2_F["④a 摩擦轮硬件 · 英雄"]
+        direction TB
+        MF["DjiMotor · 摩擦轮电机 ×6 ★<br/>first/second/third × front/back"]
+    end
+
+    subgraph HWL2_B["④b 拨弹盘硬件 · 英雄"]
+        direction TB
+        MB2["LkMotor · 拨弹盘电机 ★<br/>MG5010Ei10"]
+    end
+
+    subgraph HWL2_S["④c 光电/灰度传感器 · 英雄"]
+        direction TB
+        SEN["光电 / 灰度传感器 · 判供弹 ★"]
+    end
+
+    subgraph HWL2_P["④d 推杆硬件 · 英雄"]
+        direction TB
+        MP["DjiMotor · 推杆电机 ★<br/>M3508 id3"]
+    end
+
+    EXT2["上游 · 相机 / 裁判 / 遥控 / 导航 / IMU"]
+    RC2["遥控"]
+    REF2["裁判"]
+
+    EXT2 --> AC2
+    AC2 == "方法调用 update() · 喂状态" ==> FC2
+    FC2 == "方法返回 aim() · 输出 Aimed" ==> AC2
+    AC2 -- "should_shoot 开火" --> PT
+    RC2 -- "开关 / F键切档" --> FW2
+    REF2 -- "cooling 冷却 / heat_limit 热限" --> HC2
+    FW2 -- "friction_ready 就绪 / bullet_fired 发弹" --> PT
+    FW2 -- "bullet_fired 发弹事件" --> HC2
+    HC2 -- "limited_by_heat 可发弹数" --> PT
+    SEN -- "光电 / 灰度 判供弹" --> PT
+    FW2 -- "control_velocity 目标转速 ×6" --> P2
+    P2 -- "control_torque 扭矩 ×6" --> MF
+    PT -- "bullet_feeder/control_torque 拨弹扭矩" --> MB2
+    PT -- "putter/control_torque 推杆扭矩" --> MP
+    MB2 -. "angle/velocity 反馈" .-> PT
+    MP -. "angle/velocity 反馈" .-> PT
+    MF -. "velocity 转速反馈 ×6" .-> P2
+    MF -. "velocity 转速反馈" .-> FW2
+
+    %% 四个硬件框用不同配色，一目了然
+    style HWL2_F fill:#dbeafe,stroke:#1d4ed8,stroke-width:2px
+    style HWL2_B fill:#fef3c7,stroke:#b45309,stroke-width:2px
+    style HWL2_S fill:#dcfce7,stroke:#15803d,stroke-width:2px
+    style HWL2_P fill:#ede9fe,stroke:#6d28d9,stroke-width:2px
