@@ -6,7 +6,8 @@
 //        ▼
 //   读内部当前角 /motor_demo/motor/angle （DjiMotor 输出，多圈连续）
 //        ▼ std::remainder 卷绕到 [-π, π)  ← 走优弧(短弧)
-//   出 /motor_demo/angle_error → 给外环 ErrorPidController 吃
+//   出 /motor_demo/angle_error  → 给外环 ErrorPidController 吃
+//   出 /motor_demo/target_angle → 目标角(多圈连续)，供 Foxglove 与 angle 叠图比对
 //
 // 安全：收到第一条指令前，把目标锁在当前角 → 一启动电机不乱转。
 // ============================================================================
@@ -34,6 +35,7 @@ public:
 
         register_input("/motor_demo/motor/angle", current_angle_);
         register_output("/motor_demo/angle_error", angle_error_, 0.0);
+        register_output("/motor_demo/target_angle", target_angle_output_, 0.0);
 
         // QoS{1}=KeepLast(1)：收发各存最近 1 帧即可（QoS{0} 在 jazzy 会打 KEEP_LAST 警告）
         cmd_subscription_ = create_subscription<std_msgs::msg::Float64>(
@@ -56,11 +58,15 @@ public:
         // 即"从当前角到目标角最近的那条有向弧"→ 正走正、负走负，不绕远路
         *angle_error_ =
             std::remainder(target_angle_ - *current_angle_, 2.0 * std::numbers::pi);
+
+        // 目标角广播（不卷绕，保持多圈连续角）→ 与当前角叠图直接比对
+        *target_angle_output_ = target_angle_;
     }
 
 private:
     InputInterface<double> current_angle_;
     OutputInterface<double> angle_error_;
+    OutputInterface<double> target_angle_output_;
 
     double target_angle_ = 0.0;
     bool has_command_ = false;   // 是否已收到用户角度指令

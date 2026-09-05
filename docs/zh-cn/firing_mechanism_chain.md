@@ -312,7 +312,7 @@ flowchart TB
 | `rmcs_core/src/hardware/test.cpp` | 新增(我方) | 硬件组件 `MotorTest`：**CBoard + M3508(CAN1,id3) + DR16**。仿现有车文件骨架（主/伙伴组件解环） | 任务二 + 任务三(加多圈) |
 | `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 新增(我方) | 组件：左摇杆 y → `/motor_demo/target_velocity`（摇杆断连输出 0，安全） | 任务二 |
 | `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 新增(我方) | 组件：测速一阶低通 → `/motor_demo/motor/velocity_filtered` | 任务二 |
-| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 → `/motor_demo/angle_error` | 任务三 |
+| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 `/motor_demo/angle_error`，并把目标角广播成 `/motor_demo/target_angle` 供叠图比对 | 任务三 |
 | `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：把上面组件 + 现成 PID 串起来；含 `ValueBroadcaster` 观测 | 任务二/三 |
 | `rmcs_core/plugins.xml` | 改动(**官方唯一**) | 登记新组件（RMCS 加载必需） | 任务二/三 |
 
@@ -339,6 +339,7 @@ flowchart TB
 - 读当前多圈角 `/motor_demo/motor/angle`。
 - **走优弧**：`误差 = std::remainder(目标 − 当前, 2π)`，结果落在 [−π,π)，永远选短弧方向。
 - **锁当前角**：没收到指令前目标=当前角 → 上电不乱转。
+- **出 `target_angle`**：把目标角也注册成输出并广播（多圈连续、不卷绕），Foxglove 里与 `angle` 叠图即可直观看到“追没追上、误差多少”。
 
 ## 3. 任务二：速度闭环（摇杆 → 电机转）
 
@@ -366,6 +367,7 @@ flowchart LR
 - 外环吃角度误差、出"目标速度"；内环(任务二的)追目标速度 → 串级更稳。
 - **必须先开 `enable_multi_turn_angle()`**：单圈角度 2π↔0 会跳变，角度环会追着绕圈。
 - 验证：启动锁当前角不动 → `ros2 topic pub -1 /motor_demo/angle_cmd std_msgs/msg/Float64 "{data: 1.5}"` → 走优弧到位停；再发 `-1.5` 走短弧回。
+- Foxglove 对比：订阅 `target_angle` + `angle` 两条叠一起，看实际角追目标角；`angle_error` 看收敛残余。
 
 ## 5. 调参速查（都在 test.yaml，改完重编译重启动）
 

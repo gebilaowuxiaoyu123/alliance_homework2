@@ -74,6 +74,7 @@ value_broadcaster:
   ros__parameters:
     forward_list: [
       "/motor_demo/target_velocity",         # 外环输出=内环目标速度
+      "/motor_demo/target_angle",            # ★目标角度(与 angle 叠图比对)
       "/motor_demo/angle_error",             # 角度误差(优弧卷绕后)
       "/motor_demo/motor/angle",             # 当前角度(多圈连续)
       "/motor_demo/motor/velocity",          # 原始测速
