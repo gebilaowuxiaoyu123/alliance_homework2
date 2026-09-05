@@ -311,9 +311,10 @@ flowchart TB
 |---|---|---|---|
 | `rmcs_core/src/hardware/test.cpp` | 新增(我方) | 硬件组件 `MotorTest`：**CBoard + M3508(CAN1,id3) + DR16**。仿现有车文件骨架（主/伙伴组件解环） | 任务二 + 任务三(加多圈) |
 | `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 新增(我方) | 组件：左摇杆 y → `/motor_demo/target_velocity`（摇杆断连输出 0，安全） | 任务二 |
-| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 新增(我方) | 组件：测速一阶低通 → `/motor_demo/motor/velocity_filtered` | 任务二 |
+| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 新增(我方) | 组件：测速 **中值+低通串联** → `/motor_demo/motor/velocity_filtered`（中值砍量化尖刺，低通平滑） | 任务二 |
+| `rmcs_core/src/filter/median_filter.hpp` | 新增(我方) | 滤波器：**中值滤波**（滑动窗口取排序中值），专砍偶发尖刺/离群点；参数 `median_window`(奇数) | 任务二扩展 |
 | `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 `/motor_demo/angle_error`，并把目标角广播成 `/motor_demo/target_angle` 供叠图比对 | 任务三(经典版) |
-| `rmcs_core/src/controller/motor_demo/command_mode_controller.cpp` | 新增(我方) | 组件 `CommandModeController`：yaml `mode` 一键切 **angle/velocity/torque** + 设固定目标；angle 内置外环P；可被外部 cmd topic 覆盖 | 扩展(模式切换) |
+| `rmcs_core/src/controller/motor_demo/command_mode_controller.cpp` | 新增(我方) | 组件 `CommandModeController`：yaml `mode` 一键切 **angle/velocity/torque** + 设固定目标；angle 内置外环P；velocity 带**波形测试接口** `velocity_waveform`(none/square/sine)；可被外部 cmd topic 覆盖 | 扩展(模式切换) |
 | `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：上面组件 + 现成 PID 串起来；含三模式切换段 `motor_command_mode` 与 `ValueBroadcaster` 观测 | 任务二/三/模式切换 |
 | `rmcs_core/plugins.xml` | 改动(**官方唯一**) | 登记新组件（RMCS 加载必需） | 任务二/三 |
 

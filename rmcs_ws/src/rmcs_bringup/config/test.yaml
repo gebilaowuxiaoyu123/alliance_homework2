@@ -32,7 +32,7 @@ rmcs_executor:
       # 观测：内部 double → 真实 ROS2 话题（Foxglove / ros2 topic echo）
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
 
-      # ---------- 经典双环接线(教学参考, 默认停用) ----------
+      # ---------- 经典双环接线(教学参考, 默认停用, 开始测试双环时使用) ----------
       # 旧版: angle_cmd → AngleTargetController → 外环 ErrorPid → 内环 Pid
       # 现已被 CommandModeController 的 angle 模式取代；想复看经典版就把
       # 下面两行取消注释 + components 里停用 motor_command_mode。
@@ -44,20 +44,28 @@ motor_test_hardware:
     # CBoard 的 USB 序列号（lsusb -v 看到的 iSerial），不是路径！
     board_serial: "D4-6A83-030D-F3D0-9103-F8A5-1246"
 
+#自编，用来方便调整
+
 motor_command_mode:              # ★★★ 切模式 & 设目标都在这 ★★★
   ros__parameters:
-    mode: angle                # angle | velocity | torque  三选一
+    mode: velocity             # angle | velocity | torque  三选一
     # —— 各模式固定目标（yaml 值 = 开机默认；收到外部 cmd topic 后实时覆盖）——
     angle: 1.0                   # angle 模式  目标角度(rad)，多圈连续
-    velocity: 3.0                # velocity 模式 目标速度(rad/s)
+    velocity: 3.0                # velocity 模式 目标速度(rad/s)(waveform=none 时用)
     torque: 0.5                  # torque 模式  目标力矩(N·m)
     # —— angle 模式内置“外环 P”：角度误差 → 目标速度（同任务三外环参数）——
     angle_kp: 2.0                # 抖就降、到位太慢就升
     angle_velocity_max: 5.0      # 限速 rad/s，防飞
+    # —— ★velocity 测试接口：目标速度 = 时间的函数 v(t)，改这几个就行 ——
+    velocity_waveform: square     # none(常数) | square(方波±A) | sine(正弦)
+    waveform_amplitude: 1.0       # 波形幅值 A (rad/s) —— 改小=转慢
+    waveform_frequency_hz: 0.2    # 波形频率 (Hz) → 方波半周期 = 0.5/f = 2.5s
+    waveform_cycles: 0            # 跑满几周期后自动归零停; 0 = 一直跑
 
 motor_velocity_filter:
   ros__parameters:
-    cutoff_frequency: 10.0      # 滤波截止(Hz)：毛刺多就再降(8/6)，太钝则回调并降kp
+    median_window: 5          # ★中值窗口(奇数 3/5/7)：砍测速偶发尖刺；越大越钝
+    cutoff_frequency: 10.0    # 低通截止(Hz)：毛刺多就再降(8/6)，太钝则回调并降kp
     sampling_frequency: 1000.0  # 必须等于 update_rate
 
 motor_speed_pid_controller:      # 内环(速度环)：目标速度 → 扭矩
@@ -80,8 +88,8 @@ value_broadcaster:
     # ★torque 模式：没有 target_velocity，把这行注释掉再启动。
     forward_list: [
       "/motor_demo/target_velocity",         # 目标速度(angle/velocity 模式; torque 无)
-      "/motor_demo/target_angle",            # 目标角度(angle 模式才开)
-      "/motor_demo/angle_error",             # 角度误差(angle 模式才开)
+      # "/motor_demo/target_angle",          # 目标角度(angle 模式才开)
+      # "/motor_demo/angle_error",           # 角度误差(angle 模式才开)
       "/motor_demo/motor/angle",             # 当前角度(多圈连续)
       "/motor_demo/motor/velocity",          # 原始测速
       "/motor_demo/motor/torque",            # 原始扭矩
