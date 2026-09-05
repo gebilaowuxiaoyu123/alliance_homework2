@@ -42,7 +42,8 @@ public:
         // 1) 配置电机：M3508, id=3。可选链：
         //    .set_reversed()          电机转反了再加
         //    .enable_multi_turn_angle()  需要累计多圈角度再加
-        motor_.configure(device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3});
+        motor_.configure(
+            device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3}.set_reversed());
 
         // 2) 打开板子（串口名来自 yaml 的 board_serial 参数）
         board_ = std::make_unique<librmcs::board::CBoard>(

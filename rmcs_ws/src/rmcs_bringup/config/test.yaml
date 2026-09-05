@@ -20,6 +20,9 @@ rmcs_executor:
       # 闭环：复用现成 PID
       - rmcs_core::controller::pid::PidController -> motor_speed_pid_controller
 
+      # 观测：把内部 double 转发成真实 ROS2 话题（Foxglove / ros2 topic echo 可见）
+      - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
+
 motor_test_hardware:
   ros__parameters:
     # CBoard 的 USB 序列号（lsusb -v 看到的 iSerial），不是路径！
@@ -28,11 +31,11 @@ motor_test_hardware:
 motor_joystick_mapping:
   ros__parameters:
     # 保护：先限到低速验证（M3508 空载额定约 40+ rad/s，先给 5 起步）
-    max_velocity: 5.0
+    max_velocity: 3.0   # 摇杆推满→目标3 rad/s。先别给5，力更可控
 
 motor_velocity_filter:
   ros__parameters:
-    cutoff_frequency: 20.0      # 滤波截止(Hz)：测速锯齿→调低(10~15)；电机拖沓→调高(40~60)
+    cutoff_frequency: 10.0      # 滤波截止(Hz)：20 时毛刺多("拉")→降到 10 更平滑；还拉就再降(8/6)，太钝则回调并降kp
     sampling_frequency: 1000.0  # 必须等于 update_rate
 
 motor_speed_pid_controller:
@@ -40,11 +43,21 @@ motor_speed_pid_controller:
     measurement: /motor_demo/motor/velocity_filtered   # 反馈：滤波后测速(rad/s)
     setpoint:    /motor_demo/target_velocity           # 目标：摇杆映射出的速度
     control:     /motor_demo/motor/control_torque      # 输出：扭矩(N·m)给电机
-    kp: 0.02            # 先给安全小值，真机逐档加大（看会不会抖/响应慢）
-    ki: 0.0
-    kd: 0.0
+    kp: 0.4            # P：误差→力。太小推不动(0.02实测不转)，0.4 推满有 0.4×上限 的力
+    ki: 0.1            # I：消除静摩擦/残余误差，慢速也能顶到位
+    kd: 0.0            # D：测速有噪声先不加，抖了再说
     # 保护：扭矩限幅先收窄到 ±1 N·m（M3508 满幅≈6 N·m），调稳前别给大扭矩
     output_min: -1.0
     output_max: 1.0
     integral_min: 0.0
     integral_max: 0.0
+
+value_broadcaster:
+  ros__parameters:
+    forward_list: [
+      "/motor_demo/target_velocity",         # 摇杆目标速度
+      "/motor_demo/motor/angle",             # 当前角度(判方向用)
+      "/motor_demo/motor/velocity",          # 原始测速
+      "/motor_demo/motor/velocity_filtered", # 滤波后测速
+      "/motor_demo/motor/control_torque",    # 给电机的扭矩
+    ]
