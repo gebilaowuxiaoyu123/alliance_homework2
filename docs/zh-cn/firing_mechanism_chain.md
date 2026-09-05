@@ -290,172 +290,101 @@ flowchart TB
 
 ---
 
-# 任务二 · 用 RMCS 驱动电机（DR16 → 摇杆 → PID 速度闭环 + 低通滤波）✅ 已完成
-
-> 任务要求：仿照现有 hardware 文件写电机控制硬件 + 接入 DR16；摇杆映射成控制速度；PID 闭环；挑合适的滤波器处理测速。
-
-## 架构与数据流（真机验证通过）
-
-```mermaid
-flowchart LR
-    RC["DR16 遥控器"] -->|"/remote/joystick/left"| JM["JoystickVelocityMapping<br/>摇杆y → 目标速度"]
-    JM -->|"/motor_demo/target_velocity"| PID["PidController<br/>速度环 kp0.4/ki0.1"]
-    HW["MotorTest<br/>CBoard + M3508(CAN1 id3)"] -->|"/motor_demo/motor/velocity"| F["VelocityFilter<br/>一阶低通 10Hz"]
-    F -->|"/motor_demo/motor/velocity_filtered"| PID
-    PID -->|"/motor_demo/motor/control_torque"| HW
-```
-
-## 交付文件（都在真实 RMCS 源码树）
-
-| 文件 | 作用 |
-|---|---|
-| `rmcs_core/src/hardware/test.cpp` | 硬件组件 `MotorTest`：CBoard + 单 M3508(CAN1 id3) + DR16（主/伙伴组件解环） |
-| `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 左摇杆 y → `/motor_demo/target_velocity` |
-| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 测速一阶低通 → `/motor_demo/motor/velocity_filtered` |
-| `rmcs_core/plugins.xml` | 注册组件 |
-| `rmcs_bringup/config/test.yaml` | 完整接线 + `ValueBroadcaster` 观测 |
-| `rmcs_core/src/broadcaster/value_broadcaster.cpp` | **复用仓库**：内部 double → 真实 ROS2 话题 |
-
-## 复用了仓库哪些现成代码
-- 速度环 → `PidController`；滤波 → `filter::LowPassFilter`；遥控 → `device::RemoteControl`/`Dr16`
-- 方向修正 → `DjiMotor::Config::set_reversed()`（物理转向与期望相反时加）
-
-## 实测要点/结论
-- **M3508 · CAN1 · id3**；板子 **CBoard**（USB PID `0xD401`），`board_serial` = USB 序列号（非路径）
-- **速度要滤、角度不滤**（角度滤波只添滞后）；速度是差分有量化噪声 → 低通
-- **kp/ki/kd**：P 差多少给多少力（太小推不动）、I 消静摩擦残余、D 噪声大慎用
-- 内环 kp=0.02 只有 ~0.04N·m 推不动 → 0.4 + ki0.1 跟手
-- 容器无 udev：拔插后 USB 设备号变 → `bash /home/ubuntu/fix_usb.sh`
-- Foxglove 看不到进程内话题 → 用 `ValueBroadcaster` 转发成 ROS2 话题（`ros2 topic echo` 也能读）
-
-## 验证结果
-真机：遥控左杆推 → 电机跟着转（速度跟杆位）；回中停；Foxglove 见 target/velocity(抖)/velocity_filtered(平滑) 联动 → 任务二完整闭环打通。
 
 
 ---
 
-# 任务二 · 用 RMCS 驱动电机（DR16 → 摇杆 → PID 速度闭环 + 低通滤波）✅ 已完成
+# 电机驱动任务教程（任务二：速度闭环 → 任务三：双环控角度）✅ 均已完成
 
-> 任务要求：仿照现有 hardware 文件写电机控制硬件 + 接入 DR16；摇杆映射成控制速度；PID 闭环；挑合适的滤波器处理测速。
+> 一套代码从"摇杆推着电机转"做到"发个角度电机走优弧到位"。适合当教程读。
+> 改动范围：**官方库只动 `plugins.xml`（登记新组件，框架必需）**；其余都是自己新增的文件，全部列在下面。
 
-## 架构与数据流（真机验证通过）
+## 0. 先懂 3 个概念（看懂所有代码的前提）
 
-```mermaid
-flowchart LR
-    RC["DR16 遥控器"] -->|"/remote/joystick/left"| JM["JoystickVelocityMapping<br/>摇杆y → 目标速度"]
-    JM -->|"/motor_demo/target_velocity"| PID["PidController<br/>速度环 kp0.4/ki0.1"]
-    HW["MotorTest<br/>CBoard + M3508(CAN1 id3)"] -->|"/motor_demo/motor/velocity"| F["VelocityFilter<br/>一阶低通 10Hz"]
-    F -->|"/motor_demo/motor/velocity_filtered"| PID
-    PID -->|"/motor_demo/motor/control_torque"| HW
-```
+1. **一个组件 = 一个 C++ 类**（继承 `rmcs_executor::Component`），executor 每 1ms 调它的 `update()`。
+2. **组件之间靠"话题"连接**（`register_output` 发布 / `register_input` 订阅，同名即连通）。⚠️ 这些是**进程内**话题，不在 ROS2 网络里，`ros2 topic` / Foxglove 默认看不到。
+3. **复用**：RMCS 仓库现成的东西（PID、滤波器、遥控、广播器）直接拿来接线，别重写。
 
-## 交付文件（都在真实 RMCS 源码树）
+## 1. 我新增/改动了哪些文件（全清单）
 
-| 文件 | 作用 |
-|---|---|
-| `rmcs_core/src/hardware/test.cpp` | 硬件组件 `MotorTest`：CBoard + 单 M3508(CAN1 id3) + DR16（主/伙伴组件解环） |
-| `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 左摇杆 y → `/motor_demo/target_velocity` |
-| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 测速一阶低通 → `/motor_demo/motor/velocity_filtered` |
-| `rmcs_core/plugins.xml` | 注册组件 |
-| `rmcs_bringup/config/test.yaml` | 完整接线 + `ValueBroadcaster` 观测 |
-| `rmcs_core/src/broadcaster/value_broadcaster.cpp` | **复用仓库**：内部 double → 真实 ROS2 话题 |
+| 文件 | 新增/改动 | 是什么 | 属于 |
+|---|---|---|---|
+| `rmcs_core/src/hardware/test.cpp` | 新增(我方) | 硬件组件 `MotorTest`：**CBoard + M3508(CAN1,id3) + DR16**。仿现有车文件骨架（主/伙伴组件解环） | 任务二 + 任务三(加多圈) |
+| `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 新增(我方) | 组件：左摇杆 y → `/motor_demo/target_velocity`（摇杆断连输出 0，安全） | 任务二 |
+| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 新增(我方) | 组件：测速一阶低通 → `/motor_demo/motor/velocity_filtered` | 任务二 |
+| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 → `/motor_demo/angle_error` | 任务三 |
+| `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：把上面组件 + 现成 PID 串起来；含 `ValueBroadcaster` 观测 | 任务二/三 |
+| `rmcs_core/plugins.xml` | 改动(**官方唯一**) | 登记新组件（RMCS 加载必需） | 任务二/三 |
 
-## 复用了仓库哪些现成代码
-- 速度环 → `PidController`；滤波 → `filter::LowPassFilter`；遥控 → `device::RemoteControl`/`Dr16`
-- 方向修正 → `DjiMotor::Config::set_reversed()`（物理转向与期望相反时加）
+**复用的现成组件**（没重写）：`PidController`/`ErrorPidController`（PID）、`filter::LowPassFilter`（滤波）、`device::RemoteControl`/`Dr16`（遥控）、`broadcaster::ValueBroadcaster`（内部→ROS2 话题，给 Foxglove/`ros2 topic` 用）。
 
-## 实测要点/结论
-- **M3508 · CAN1 · id3**；板子 **CBoard**（USB PID `0xD401`），`board_serial` = USB 序列号（非路径）
-- **速度要滤、角度不滤**（角度滤波只添滞后）；速度是差分有量化噪声 → 低通
-- **kp/ki/kd**：P 差多少给多少力（太小推不动）、I 消静摩擦残余、D 噪声大慎用
-- 内环 kp=0.02 只有 ~0.04N·m 推不动 → 0.4 + ki0.1 跟手
-- 容器无 udev：拔插后 USB 设备号变 → `bash /home/ubuntu/fix_usb.sh`
-- Foxglove 看不到进程内话题 → 用 `ValueBroadcaster` 转发成 ROS2 话题（`ros2 topic echo` 也能读）
+## 2. 每个新增组件逐个讲
 
-## 验证结果
-真机：遥控左杆推 → 电机跟着转（速度跟杆位）；回中停；Foxglove 见 target/velocity(抖)/velocity_filtered(平滑) 联动 → 任务二完整闭环打通。
+### 2.1 `test.cpp` → `MotorTest`（硬件层）
+- 干什么：跟真硬件说话。构造里 `configure(M3508, 3)` 配电机；`RemoteControl + register_dr16` 接遥控；`CBoard(串口)` 打开板子。
+- 拆"主组件 + 伙伴组件"：电机的**输出**(angle/velocity)注册在主组件、**输入**(control_torque)注册在伙伴组件 → 让 executor 拓扑排成"收→算→发"、避免和 PID 形成环（这是 RMCS 硬件文件固定套路，抄 omni_infantry.cpp 即可）。
+- 回调：`can_receive` 收 CAN 反馈按 id(0x203) 存；`uart_receive`(DBUS) 喂 DR16。
 
+### 2.2 `joystick_velocity_mapping.cpp`（任务二软件①）
+- 读 `/remote/joystick/left`（Eigen::Vector2d，来自硬件 RemoteControl）。
+- 输出 `目标速度 = 摇杆y × max_velocity` → `/motor_demo/target_velocity`。
+- 关键：`joystick_.ready()` 判空，遥控没连就输出 0（安全）。
 
----
+### 2.3 `velocity_filter.cpp`（任务二软件②）
+- 读原始测速 → 一阶低通 `LowPassFilter` → 输出滤波后转速给 PID 当反馈。
+- 为什么滤速度不滤角度：测速是"位置差分"→ 量化噪声大；角度是绝对读数很干净，滤了反而加滞后。
 
-# 任务二 · 用 RMCS 驱动电机（DR16 → 摇杆 → PID 速度闭环 + 低通滤波）✅ 已完成
+### 2.4 `angle_target_controller.cpp`（任务三软件）
+- 订阅外部 ROS2 话题 `/motor_demo/angle_cmd`（`std_msgs/Float64`，单位弧度）→ 满足"ros2 topic 发布角度值"。
+- 读当前多圈角 `/motor_demo/motor/angle`。
+- **走优弧**：`误差 = std::remainder(目标 − 当前, 2π)`，结果落在 [−π,π)，永远选短弧方向。
+- **锁当前角**：没收到指令前目标=当前角 → 上电不乱转。
 
-> 任务要求：仿照现有 hardware 文件写电机控制硬件 + 接入 DR16；摇杆映射成控制速度；PID 闭环；挑合适的滤波器处理测速。
-
-## 架构与数据流（本次真机验证通过）
+## 3. 任务二：速度闭环（摇杆 → 电机转）
 
 ```mermaid
 flowchart LR
-    RC["DR16 遥控器<br/>(真机手测)"] -->|"/remote/joystick/left"| JM["JoystickVelocityMapping<br/>摇杆y → 目标速度"]
-    JM -->|"/motor_demo/target_velocity"| PID["PidController<br/>速度环 kp0.4/ki0.1"]
-    HW["MotorTest<br/>CBoard + M3508(CAN1 id3)"] -->|"/motor_demo/motor/velocity"| F["VelocityFilter<br/>一阶低通 10Hz"]
-    F -->|"/motor_demo/motor/velocity_filtered"| PID
+    RC["DR16遥控"] -->|"/remote/joystick/left"| JM["JoystickVelocityMapping"]
+    JM -->|"/motor_demo/target_velocity"| PID["PidController 速度环"]
+    HW["MotorTest 电机"] -->|"/motor_demo/motor/velocity"| F["VelocityFilter 低通"]
+    F -->|"/.../velocity_filtered"| PID
     PID -->|"/motor_demo/motor/control_torque"| HW
 ```
+- 启动：`cd rmcs_ws && source install/setup.bash && ros2 launch rmcs_bringup rmcs.launch.py robot:=test`
+- 验证：推左杆电机跟转、回中停；Foxglove 看 velocity(抖)/velocity_filtered(平滑)/target_velocity(杆)。
+- 要点：内环 kp 太小推不动（0.02→0.4+ki0.1 跟手）；转向反就 `.set_reversed()`。
 
-## 交付文件（都在真实 RMCS 源码树里）
+## 4. 任务三：双环控角度（发角度 → 走优弧到位）
 
-| 文件 | 作用 |
-|---|---|
-| `rmcs_core/src/hardware/test.cpp` | 硬件组件 `MotorTest`：CBoard + 单 M3508(CAN1 id3) + DR16（仿现有车文件骨架，主/伙伴组件解环） |
-| `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 左摇杆 y → `/motor_demo/target_velocity`（断连输出 0 保护） |
-| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 测速一阶低通 → `/motor_demo/motor/velocity_filtered` |
-| `rmcs_core/plugins.xml` | 注册以上组件 |
-| `rmcs_bringup/config/test.yaml` | 完整接线 + 观测 |
-| `rmcs_core/src/broadcaster/value_broadcaster.cpp` | **复用仓库**：内部 double → 真实 ROS2 话题（Foxglove 用） |
+```mermaid
+flowchart LR
+    PUB["ros2 topic pub angle_cmd"] --> AT["AngleTargetController 优弧误差"]
+    AT -->|"/motor_demo/angle_error"| OUTER["外环 ErrorPidController(角度)"]
+    OUTER -->|"/motor_demo/target_velocity"| INNER["内环 PidController(速度)"]
+    INNER -->|"/motor_demo/motor/control_torque"| HW["MotorTest"]
+```
+- 外环吃角度误差、出"目标速度"；内环(任务二的)追目标速度 → 串级更稳。
+- **必须先开 `enable_multi_turn_angle()`**：单圈角度 2π↔0 会跳变，角度环会追着绕圈。
+- 验证：启动锁当前角不动 → `ros2 topic pub -1 /motor_demo/angle_cmd std_msgs/msg/Float64 "{data: 1.5}"` → 走优弧到位停；再发 `-1.5` 走短弧回。
 
-## 复用了仓库哪些现成代码
-- 速度环 → **`PidController`**（`controller/pid/pid_controller.cpp`）
-- 测速滤波 → **`filter::LowPassFilter`**（`src/filter/low_pass_filter.hpp`）
-- 遥控 → 硬件 `device::RemoteControl` + `Dr16`；订阅外部话题写法参照 `omni_infantry.cpp`
-- 方向修正 → `DjiMotor::Config::set_reversed()`（实测电机转向与期望相反时加）
+## 5. 调参速查（都在 test.yaml，改完重编译重启动）
 
-## 实测要点/结论
-- **电机型号 M3508 · CAN1 · 拨码 id=3**；板子 **CBoard**（USB PID `0xD401`），`board_serial` 填 USB 序列号（非路径）
-- **速度要滤波、角度不滤**：测速是差分有量化噪声 → 低通；角度是绝对读数不滤（滤波会加滞后）
-- **kp/ki/kd**：kp 管"差多少给多少力"（太小推不动）、ki 消除静摩擦残余（不到位加 ki）、kd 测速噪声大慎用
-- **内环 kp 不能太小**：实测 0.02 → 只有 0.04N·m 推不动；0.4 + ki0.1 后跟手
-- **USB 权限**：容器内无 udev，拔插后设备号会变 → 用 `/home/ubuntu/fix_usb.sh` 一键修复
-- **Foxglove 看不到进程内话题** → 用 `ValueBroadcaster` 转发成真实 ROS2 话题（`ros2 topic echo` 也能读）
-
-## 验证结果
-真机手测：遥控左杆推 → **电机跟着转**（速度跟杆位）；回中停；Foxglove 曲线显示 target_velocity / velocity(原始抖) / velocity_filtered(平滑) 联动清晰 → 任务二完整闭环打通。
-
-
-
----
-
-# 任务三 · 双环 PID 控制电机角度 + ros2 topic 发布角度 + 走优弧
-
-> 要求：设计内环外环；ros2 topic 发角度把电机控到该位置；尽量走优弧。
-
-## 本次新增/改动的文件（全清单，便于核对，别只盯 test.cpp）
-
-| 类型 | 文件 | 作用 |
+| 现象 | 调哪个 | 方向 |
 |---|---|---|
-| 新增 | `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 订阅外部 `/motor_demo/angle_cmd` → 算优弧误差 `/motor_demo/angle_error`（锁当前角防启动乱转） |
-| 改动(我方文件) | `rmcs_core/src/hardware/test.cpp` | 电机 configure 加 `.enable_multi_turn_angle()`（多圈连续角度，避免 2π↔0 跳变导致绕圈） |
-| 改动(我方文件) | `rmcs_bringup/config/test.yaml` | 切成双环：AngleTargetController + 外环 ErrorPidController + 内环 PidController；停用摇杆（外环要占用 target_velocity 话题）；修复内环积分限幅(±0→±0.5 让 ki 生效) |
-| 改动(官方唯一) | `rmcs_core/plugins.xml` | 登记新组件（RMCS 加载机制必需） |
-| 沿用 | 任务二组件：`joystick_velocity_mapping.cpp`/`velocity_filter.cpp`（暂未启用） | — |
+| 推不动/到位不了 | 内环 `kp`、`ki` | kp↑（但会抖）、ki↑（消静摩擦） |
+| 抖动/来回 | `kp`↓、滤波 `cutoff`↓ | 降增益/压高频 |
+| 到位冲过头 | 内环 `kd`↑一点 | 加阻尼 |
+| 大角度想更优雅 | 外环 `output_max` 限速 / 后续加 S 形规划 | — |
+| 扭矩不够 | 内环 `output_min/max` 放大(±1→更大) | 别超额定 |
 
-## 双环架构
+## 6. 踩过的坑（checklist）
+1. 单圈角度不开多圈 → 绕圈 ❌ → `enable_multi_turn_angle()`
+2. 内环积分限幅设 ±0 → ki 白设 ❌ → 放开(±0.5)
+3. 转向反 → `.set_reversed()`
+4. Foxglove 看进程内话题看不到 → 加 `ValueBroadcaster` 转发成 ROS2 话题
+5. 容器无 udev，USB 拔插后设备号变 → `bash /home/ubuntu/fix_usb.sh`
+6. `plugins.xml` 是加载组件的唯一入口，加了组件必须去登记
 
-```mermaid
-flowchart LR
-    PUB["ros2 topic pub /motor_demo/angle_cmd"] --> AT["AngleTargetController<br/>remainder 优弧误差"]
-    AT -->|"/motor_demo/angle_error"| OUTER["外环 ErrorPidController(角度)<br/>kp2.0 → 目标速度"]
-    OUTER -->|"/motor_demo/target_velocity"| INNER["内环 PidController(速度)<br/>kp0.4/ki0.1"]
-    INNER -->|"/motor_demo/motor/control_torque"| M["MotorTest 电机"]
-    M -->|angle/velocity 反馈| AT
-    M -->|velocity| INNER
-```
-
-## 关键点（为什么这么写）
-- **多圈角度**：角度控制前提；单圈会在 2π↔0 跳变 → 角度环误判绕圈
-- **优弧**：`std::remainder(目标−当前, 2π)` 卷绕误差到 [−π,π)，永远走短弧
-- **内环积分限幅要放开**：原先 ±0 让 ki 完全失效（角度到位靠 ki）
-- **锁当前角**：未收指令前目标=当前角，上电不乱转
-
-## 验证
-启动后电机停在原地（锁角）→ 发角度指令走优弧到位停稳；Foxglove 看 `angle`/`angle_error`(收敛0)/`target_velocity`。
+## 7. 验证结果（真机）
+- 任务二：摇杆推 → 电机跟转、回中停、滤波平滑 → 通 ✅
+- 任务三：待真机验证（代码/配置已就绪，锁角安全，发角度指令即可测）
