@@ -73,6 +73,15 @@ motor_angle_pid_controller:    # 外环：角度误差(rad) → 目标速度(rad
     integral_min: 0.0
     integral_max: 0.0
 
+# ================= 参数·角度方波源(motor_angle_target)【测外环用】 =================
+motor_angle_target:
+  ros__parameters:
+    angle_waveform: square          # none=听外部 angle_cmd | square=内置角度方波
+    angle_square_low: 0.5           # 方波低位角(rad)
+    angle_square_high: 1.5          # 方波高位角(rad)
+    angle_square_half_period_s: 5.0 # 半周期(秒)：5s 在高位、5s 在低位来回
+    angle_square_cycles: 0          # 0=一直跑；>0 则跑满后锁当前角
+
 # ================= 参数·共用：速度反馈滤波 + 内环PID =================
 motor_velocity_filter:
   ros__parameters:
