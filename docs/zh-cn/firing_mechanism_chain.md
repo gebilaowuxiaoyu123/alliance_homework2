@@ -384,7 +384,10 @@ flowchart LR
 4. Foxglove 看进程内话题看不到 → 加 `ValueBroadcaster` 转发成 ROS2 话题
 5. 容器无 udev，USB 拔插后设备号变 → `bash /home/ubuntu/fix_usb.sh`
 6. `plugins.xml` 是加载组件的唯一入口，加了组件必须去登记
+7. executor 报 `Serial number read failed / No compatible device`，或板子直接不枚举 → **断电重启板子主电源**（CBoard 是外部供电，只拔 USB 不会让 MCU 复位，USB 协议栈会一直卡死；断电等 10s 再上电 → 重插 USB → `fix_usb.sh`）
+8. Foxglove 端口(8765)开着但看不到话题 → 旧 foxglove 进程 DDS 会话已脱节（进程在但不参与当前 ROS2 图），干净重启 foxglove_bridge 即可
 
 ## 7. 验证结果（真机）
 - 任务二：摇杆推 → 电机跟转、回中停、滤波平滑 → 通 ✅
-- 任务三：待真机验证（代码/配置已就绪，锁角安全，发角度指令即可测）
+- 任务三：启动锁当前角不动 → `ros2 topic pub -1 /motor_demo/angle_cmd ..."{data: 1.5}"` → 走优弧到位、误差收敛 → 再发 -2.0/0.5/3.0 连续跟踪 → 通 ✅
+- 已知现象：外环纯 P(ki=0) + 电机静摩擦 → 到位后留 ~0.1 rad 稳态误差（正常，P 控制特性）；要收紧就给外环加 ki(如 0.1) + 积分限幅 ±1（需重启 executor）
