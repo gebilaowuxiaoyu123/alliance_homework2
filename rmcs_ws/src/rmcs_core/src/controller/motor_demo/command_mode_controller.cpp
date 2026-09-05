@@ -84,7 +84,10 @@ public:
             // 优弧误差卷绕到 [-π,π)，内置 P 映射成目标速度(限幅防飞)
             const double error =
                 std::remainder(target_ - *current_angle_, 2.0 * std::numbers::pi);
-            *target_angle_out_    = target_;
+            // 广播的 target_angle 用"抬升值"= 当前角 + 卷绕误差（电机实际要去的
+            // 连续位置）。这样多圈累计后 Foxglove 里 target 能与 angle 重合，
+            // 不会因为差了整圈 2π 而"看着像没追上"。
+            *target_angle_out_    = *current_angle_ + error;
             *angle_error_out_     = error;
             *target_velocity_out_ = std::clamp(kp_ * error, -vmax_, vmax_);
         } else if (mode_ == "velocity") {

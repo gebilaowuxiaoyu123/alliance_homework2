@@ -409,6 +409,7 @@ flowchart LR
 ### 8.2 原理
 `CommandModeController` 构造时按 `mode` 只注册该模式需要的输出：
 - `angle`：读当前角 → 优弧误差 → 内置外环P(`angle_kp`) → `target_velocity`(交内环PID) ＋ 广播 `target_angle`/`angle_error`
+  - ℹ️ 广播的 `target_angle` 是**抬升值**(当前角+卷绕误差，即电机实际要去的连续位置)：多圈累计后 Foxglove 里能与 `angle` 重合，避免“差一整圈 2π 看着像没追上”的假象；真正的指令目标仍以你发的 `angle_cmd`/yaml `angle` 为准
 - `velocity`：直接出固定 `target_velocity`(交内环PID)
 - `torque`：直接出 `control_torque`(绕过所有PID，**开环**，无速度限制)
 
