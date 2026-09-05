@@ -287,3 +287,47 @@ flowchart TB
 
 每组件看四处：`register_input`（上游）、`register_output`（下游）、`update()`（逻辑）、`get_parameter`（参数）。
 **串联判定**：上家输出话题名 = 下家输入话题名，且数据类型一致。
+
+
+---
+
+# 任务二 · 用 RMCS 驱动电机（DR16 → 摇杆 → PID 速度闭环 + 低通滤波）✅ 已完成
+
+> 任务要求：仿照现有 hardware 文件写电机控制硬件 + 接入 DR16；摇杆映射成控制速度；PID 闭环；挑合适的滤波器处理测速。
+
+## 架构与数据流（真机验证通过）
+
+```mermaid
+flowchart LR
+    RC["DR16 遥控器"] -->|"/remote/joystick/left"| JM["JoystickVelocityMapping<br/>摇杆y → 目标速度"]
+    JM -->|"/motor_demo/target_velocity"| PID["PidController<br/>速度环 kp0.4/ki0.1"]
+    HW["MotorTest<br/>CBoard + M3508(CAN1 id3)"] -->|"/motor_demo/motor/velocity"| F["VelocityFilter<br/>一阶低通 10Hz"]
+    F -->|"/motor_demo/motor/velocity_filtered"| PID
+    PID -->|"/motor_demo/motor/control_torque"| HW
+```
+
+## 交付文件（都在真实 RMCS 源码树）
+
+| 文件 | 作用 |
+|---|---|
+| `rmcs_core/src/hardware/test.cpp` | 硬件组件 `MotorTest`：CBoard + 单 M3508(CAN1 id3) + DR16（主/伙伴组件解环） |
+| `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 左摇杆 y → `/motor_demo/target_velocity` |
+| `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 测速一阶低通 → `/motor_demo/motor/velocity_filtered` |
+| `rmcs_core/plugins.xml` | 注册组件 |
+| `rmcs_bringup/config/test.yaml` | 完整接线 + `ValueBroadcaster` 观测 |
+| `rmcs_core/src/broadcaster/value_broadcaster.cpp` | **复用仓库**：内部 double → 真实 ROS2 话题 |
+
+## 复用了仓库哪些现成代码
+- 速度环 → `PidController`；滤波 → `filter::LowPassFilter`；遥控 → `device::RemoteControl`/`Dr16`
+- 方向修正 → `DjiMotor::Config::set_reversed()`（物理转向与期望相反时加）
+
+## 实测要点/结论
+- **M3508 · CAN1 · id3**；板子 **CBoard**（USB PID `0xD401`），`board_serial` = USB 序列号（非路径）
+- **速度要滤、角度不滤**（角度滤波只添滞后）；速度是差分有量化噪声 → 低通
+- **kp/ki/kd**：P 差多少给多少力（太小推不动）、I 消静摩擦残余、D 噪声大慎用
+- 内环 kp=0.02 只有 ~0.04N·m 推不动 → 0.4 + ki0.1 跟手
+- 容器无 udev：拔插后 USB 设备号变 → `bash /home/ubuntu/fix_usb.sh`
+- Foxglove 看不到进程内话题 → 用 `ValueBroadcaster` 转发成 ROS2 话题（`ros2 topic echo` 也能读）
+
+## 验证结果
+真机：遥控左杆推 → 电机跟着转（速度跟杆位）；回中停；Foxglove 见 target/velocity(抖)/velocity_filtered(平滑) 联动 → 任务二完整闭环打通。
