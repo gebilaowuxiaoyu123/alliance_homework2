@@ -313,9 +313,9 @@ flowchart TB
 | `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 新增(我方) | 组件：左摇杆 y → `/motor_demo/target_velocity`（摇杆断连输出 0，安全） | 任务二 |
 | `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 新增(我方) | 组件：测速 **中值+低通串联** → `/motor_demo/motor/velocity_filtered`（中值砍量化尖刺，低通平滑） | 任务二 |
 | `rmcs_core/src/filter/median_filter.hpp` | 新增(我方) | 滤波器：**中值滤波**（滑动窗口取排序中值），专砍偶发尖刺/离群点；参数 `median_window`(奇数) | 任务二扩展 |
-| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 `/motor_demo/angle_error`，并把目标角广播成 `/motor_demo/target_angle` 供叠图比对 | 任务三(经典版) |
-| `rmcs_core/src/controller/motor_demo/command_mode_controller.cpp` | 新增(我方) | 组件 `CommandModeController`：yaml `mode` 一键切 **angle/velocity/torque** + 设固定目标；angle 内置外环P；velocity 带**波形测试接口** `velocity_waveform`(none/square/sine)；可被外部 cmd topic 覆盖 | 扩展(模式切换) |
-| `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：上面组件 + 现成 PID 串起来；含三模式切换段 `motor_command_mode` 与 `ValueBroadcaster` 观测 | 任务二/三/模式切换 |
+| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 `/motor_demo/angle_error`，并把目标角广播成 `/motor_demo/target_angle` 供叠图比对；可开内置**角度方波** `angle_waveform: square` 调外环 | 任务三(经典版) |
+| `rmcs_core/src/controller/motor_demo/command_mode_controller.cpp` | 新增(我方) | 组件 `CommandModeController`：**速度/力矩目标源(方案B专用)**。velocity 带**波形测试接口** `velocity_waveform`(none/square/sine)；可被外部 `velocity_cmd`/`torque_cmd` 覆盖。⚠️角度已交给独立外环块，本组件不再做角度(误写 angle 会警告并转 velocity) | 扩展(速度/力矩源) |
+| `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：A/B 两套方案(见 §8)，组件图 + 独立外环 PID 块 `motor_angle_pid_controller` + `motor_command_mode` + `ValueBroadcaster` | 任务二/三/模式切换 |
 | `rmcs_core/plugins.xml` | 改动(**官方唯一**) | 登记新组件（RMCS 加载必需） | 任务二/三 |
 
 **复用的现成组件**（没重写）：`PidController`/`ErrorPidController`（PID）、`filter::LowPassFilter`（滤波）、`device::RemoteControl`/`Dr16`（遥控）、`broadcaster::ValueBroadcaster`（内部→ROS2 话题，给 Foxglove/`ros2 topic` 用）。
@@ -398,24 +398,51 @@ flowchart LR
 - 任务三：启动锁当前角不动 → `ros2 topic pub -1 /motor_demo/angle_cmd ..."{data: 1.5}"` → 走优弧到位、误差收敛 → 再发 -2.0/0.5/3.0 连续跟踪 → 通 ✅
 - 已知现象：外环纯 P(ki=0) + 电机静摩擦 → 到位后留 ~0.1 rad 稳态误差（正常，P 控制特性）；要收紧就给外环加 ki(如 0.1) + 积分限幅 ±1（需重启 executor）
 
-## 8. 扩展：yaml 一键切 角度/速度/力矩 三模式
+## 8. 扩展：test.yaml 两套方案（外环独立成块）
 
-### 8.1 怎么用（全在 `test.yaml`，改完重启 executor）
-- 切模式：`motor_command_mode` 段把 `mode:` 改成 `angle` / `velocity` / `torque`
-- 设目标：同段改 `angle`(rad) / `velocity`(rad/s) / `torque`(N·m)
-- ★torque 模式：`components` 里【速度PID】那行要注释掉（直驱绕过PID，否则两组件抢写 `control_torque` 启动报错）
-- 外部覆盖（yaml 值=开机默认，发 topic 即实时改目标）：`/motor_demo/angle_cmd`、`/motor_demo/velocity_cmd`、`/motor_demo/torque_cmd`
-- Foxglove 叠图：angle 模式把 `forward_list` 里 `target_angle` / `angle_error` 两行取消注释
+### 8.1 设计：为什么角度外环要独立成组件块
+角度环 = 串级双环的**外环**，和速度内环一样应能单独调。所以它拆成一个**独立 PID 组件块** `motor_angle_pid_controller`（`ErrorPidController` 复用，吃 `/motor_demo/angle_error`、出 `/motor_demo/target_velocity`），调角度环就直接改这个块的 `kp/ki/kd`，跟调内环一个手感。
 
-### 8.2 原理
-`CommandModeController` 构造时按 `mode` 只注册该模式需要的输出：
-- `angle`：读当前角 → 优弧误差 → 内置外环P(`angle_kp`) → `target_velocity`(交内环PID) ＋ 广播 `target_angle`/`angle_error`
-  - ℹ️ 广播的 `target_angle` 是**抬升值**(当前角+卷绕误差，即电机实际要去的连续位置)：多圈累计后 Foxglove 里能与 `angle` 重合，避免“差一整圈 2π 看着像没追上”的假象；真正的指令目标仍以你发的 `angle_cmd`/yaml `angle` 为准
-- `velocity`：直接出固定 `target_velocity`(交内环PID)
-- `torque`：直接出 `control_torque`(绕过所有PID，**开环**，无速度限制)
+### 8.2 test.yaml 的两套测试方案
+启动：`cd rmcs_ws && source install/setup.bash && ros2 launch rmcs_bringup rmcs.launch.py robot:=test`
 
-### 8.3 真机验证（2026-09-05）
-- velocity：设 3.0 → 滤波测速稳在 2.9996 ✅；`velocity_cmd=-1/0` 实时反转/停机 ✅
-- angle：设 1.0 → 电机走优弧到位(残余~0.11，同经典P) ✅
-- torque：设 0.5 → 电机持续加速(空载飞转=正常开环表现) ✅；`torque_cmd=0` 停机 ✅
-- ⚠️ 安全默认 = angle(闭环锁位不飞转)；torque 需人为注释速度PID + 小力矩 + 手随时断电
+**【A·角度】(默认开)**：经典双环，上电锁当前角，安全。
+
+```mermaid
+flowchart LR
+    PUB["angle_cmd / 内置角度方波"] --> AT["AngleTargetController 优弧误差"]
+    AT -->|angle_error| OUTER["motor_angle_pid_controller<br/>外环PID(独立块)"]
+    OUTER -->|target_velocity| INNER["motor_speed_pid_controller<br/>内环PID"]
+    INNER -->|control_torque| HW["MotorTest"]
+```
+
+- 默认 = 锁当前角(误差0不动) → 发 `angle_cmd` 走优弧；或把 `motor_angle_target` 的 `angle_waveform` 改 `square` 让目标角自动 0.5↔1.5 方波，专门压测外环。
+- 调角度环：只改 `motor_angle_pid_controller` 段的 `kp/ki/kd`（实测 ki 0→0.2 能收紧稳态残差）。
+- 切换：把 `components` 里下面两行(方案A)注释掉 + 放开方案B 那行。
+
+**【B·速度】**(纯速度/波形/力矩调试)：只留 `CommandModeController` 一个“目标源”。
+
+```mermaid
+flowchart LR
+    CM["CommandModeController 速度/力矩源"] -->|target_velocity| INNER["motor_speed_pid_controller 内环"]
+    F["VelocityFilter 中值+低通"] -->|velocity_filtered| INNER
+    INNER -->|control_torque| HW["MotorTest"]
+```
+
+- 只调内环：改 `motor_speed_pid_controller` 的 `kp/ki`。
+- 目标速度三种：`velocity_waveform: none`(固定 `velocity`) / `square`(±幅值方波) / `sine`(正弦)；外部 `velocity_cmd` 在 `none` 时实时覆盖固定值。
+- ★torque 直驱：`mode: torque` **并且** `components` 里【速度PID】那行也要注释（开环、会飞转 ⚠️）。
+
+### 8.3 原理
+- `motor_angle_pid_controller`：官方 `ErrorPidController`，measurement=`/motor_demo/angle_error`、control=`/motor_demo/target_velocity`，即外环块；配 `output_min/max`(=限目标速度)、`integral_min/max`。
+- `CommandModeController`：**只**出“目标”——velocity 直接出目标速度或波形 v(t)；torque 直出 `control_torque`(绕过所有 PID)。构造时若误写 `angle` 会警告并强制转 velocity（角度已由方案A承接，避免和独立外环块**双写** `target_velocity`）。
+- ℹ️ 广播的 `target_angle` 是**抬升值**(当前角+卷绕误差)：多圈累计后 Foxglove 能与 `angle` 重合，避免“差一整圈 2π 看着像没追上”的假象；真正指令目标仍以 `angle_cmd`/yaml 为准。
+
+### 8.4 真机验证（2026-09-05）
+- A·角度方波：`target_angle` 0.5↔1.5 每5s翻，`angle` 跟随(残余~0.1)；给外环块加 `ki=0.2` 后残余收紧 ✅
+- A·锁角+外部：启动 error=0 锁定 → `angle_cmd 1.5` → 到位(误差-0.013) → `-1.0` → 到位(误差0.001) ✅
+- B·速度固定：2.0 → 滤波测速≈2.0 ✅；外部 `velocity_cmd 4.0/-3.0` 实时覆盖 ✅
+- B·速度方波：±1.5 每5s翻，滤波跟随；原始测速偶发尖刺(3.4)被中值滤波砍掉 ✅
+- B·速度正弦：±1.5@0.2Hz 平滑跟随(低通有小滞后) ✅
+- torque 直驱：见上(开环，需注释速度PID) ⚠️
+- ⚠️ 安全默认 = 方案A 锁角(闭环不飞转)；每次测完记得切回方案A
