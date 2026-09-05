@@ -56,11 +56,12 @@ public:
 
         // 优弧：误差卷绕到 [-π, π)。remainder(a, 2π) 返回离 0 最近的余数，
         // 即"从当前角到目标角最近的那条有向弧"→ 正走正、负走负，不绕远路
-        *angle_error_ =
+        const double error =
             std::remainder(target_angle_ - *current_angle_, 2.0 * std::numbers::pi);
-
-        // 目标角广播（不卷绕，保持多圈连续角）→ 与当前角叠图直接比对
-        *target_angle_output_ = target_angle_;
+        *angle_error_ = error;
+        // 目标角广播用"抬升值"= 当前角 + 卷绕误差(显示用)：多圈累计后
+        // Foxglove 里能与 angle 重合，避免"差一整圈 2π 看着像没追上"
+        *target_angle_output_ = *current_angle_ + error;
     }
 
 private:

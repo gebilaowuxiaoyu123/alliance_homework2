@@ -1,16 +1,15 @@
 # ============================================================================
-# 电机驱动演示启动配置 —— 在 yaml 一键切 角度/速度/力矩 三模式
-# 启动：ros2 launch rmcs_bringup rmcs.launch.py robot:=test
+# 电机驱动演示 —— 任务三经典形态：双环角度闭环
+#   启动：ros2 launch rmcs_bringup rmcs.launch.py robot:=test
 #
-# ═══════════ 怎么用（改完保存，重启 executor 生效）═══════════
-#  1) 切模式   ：motor_command_mode 段里 mode: 改成 angle / velocity / torque
-#  2) 设目标值 ：同段把对应 angle / velocity / torque 改成你要的值
-#  3) ★torque 模式特殊：components 里【速度PID】那行必须注释掉
-#     （直驱绕过PID；否则两个组件同时写 control_torque 会启动报错）
-#  4) 运行时覆盖：yaml 值=开机默认，下面 topic 一发就实时改目标——
-#        angle    ← ros2 topic pub /motor_demo/angle_cmd    ..."{data: 2.0}"
-#        velocity ← ros2 topic pub /motor_demo/velocity_cmd ..."{data: 3.0}"
-#        torque   ← ros2 topic pub /motor_demo/torque_cmd   ..."{data: 0.6}"
+# 怎么玩(任务三)：
+#   启动 → 电机【锁在当前角】不乱转
+#   发角度 → ros2 topic pub -1 /motor_demo/angle_cmd ..."{data: 1.5}" → 走优弧到位
+#   Foxglove 叠图比对 target_angle(抬升) vs angle / angle_error
+#
+# ═══ 想切到【扩展：三模式/方波】CommandModeController ═══
+#   components 里：注释掉 AngleTargetController + 外环ErrorPid 两行，
+#   启用 motor_command_mode 那行；并把文件末尾"扩展参数块"取消注释。
 # ============================================================================
 rmcs_executor:
   ros__parameters:
@@ -19,81 +18,85 @@ rmcs_executor:
       # 硬件层：跟电机/遥控说话（test.cpp）
       - rmcs_core::hardware::MotorTest -> motor_test_hardware
 
-      # ★模式设定组件：mode 在 motor_command_mode 段设；出目标速度 / 或直驱力矩
-      - rmcs_core::controller::motor_demo::CommandModeController -> motor_command_mode
+      # ★任务三角度指令桥：订阅 /motor_demo/angle_cmd → 优弧误差 angle_error + 广播 target_angle
+      - rmcs_core::controller::motor_demo::AngleTargetController -> motor_angle_target
 
-      # 测速低通滤波（内环速度环测量前置；torque 直驱时留着也无害）
+      # 测速滤波（中值+低通 串联）：内环速度环测量前置
       - rmcs_core::controller::motor_demo::VelocityFilter -> motor_velocity_filter
 
+      # 外环(角度环)：角度误差 → 目标速度
+      - rmcs_core::controller::pid::ErrorPidController -> motor_angle_pid_controller
+
       # 内环(速度环)：目标速度 → 扭矩
-      # 【★torque 模式必注释这行】直驱给力矩时不能让它也写 control_torque
       - rmcs_core::controller::pid::PidController -> motor_speed_pid_controller
 
-      # 观测：内部 double → 真实 ROS2 话题（Foxglove / ros2 topic echo）
+      # 观测：内部 double → 真实 ROS2 话题
       - rmcs_core::broadcaster::ValueBroadcaster -> value_broadcaster
 
-      # ---------- 经典双环接线(教学参考, 默认停用, 开始测试双环时使用) ----------
-      # 旧版: angle_cmd → AngleTargetController → 外环 ErrorPid → 内环 Pid
-      # 现已被 CommandModeController 的 angle 模式取代；想复看经典版就把
-      # 下面两行取消注释 + components 里停用 motor_command_mode。
-      # - rmcs_core::controller::motor_demo::AngleTargetController -> motor_angle_target
-      # - rmcs_core::controller::pid::ErrorPidController -> motor_angle_pid_controller
+      # ---------- 扩展：三模式/方波 (CommandModeController, 默认停用) ----------
+      # - rmcs_core::controller::motor_demo::CommandModeController -> motor_command_mode
 
 motor_test_hardware:
   ros__parameters:
     # CBoard 的 USB 序列号（lsusb -v 看到的 iSerial），不是路径！
     board_serial: "D4-6A83-030D-F3D0-9103-F8A5-1246"
 
-#自编，用来方便调整
-
-motor_command_mode:              # ★★★ 切模式 & 设目标都在这 ★★★
+motor_angle_pid_controller:   # 外环：角度误差(rad) → 目标速度(rad/s)
   ros__parameters:
-    mode: velocity             # angle | velocity | torque  三选一
-    # —— 各模式固定目标（yaml 值 = 开机默认；收到外部 cmd topic 后实时覆盖）——
-    angle: 1.0                   # angle 模式  目标角度(rad)，多圈连续
-    velocity: 3.0                # velocity 模式 目标速度(rad/s)(waveform=none 时用)
-    torque: 0.5                  # torque 模式  目标力矩(N·m)
-    # —— angle 模式内置“外环 P”：角度误差 → 目标速度（同任务三外环参数）——
-    angle_kp: 2.0                # 抖就降、到位太慢就升
-    angle_velocity_max: 5.0      # 限速 rad/s，防飞
-    # —— ★velocity 测试接口：目标速度 = 时间的函数 v(t)，改这几个就行 ——
-    velocity_waveform: square     # none(常数) | square(方波±A) | sine(正弦)
-    waveform_amplitude: 1.0       # 波形幅值 A (rad/s) —— 改小=转慢
-    waveform_frequency_hz: 0.2    # 波形频率 (Hz) → 方波半周期 = 0.5/f = 2.5s
-    waveform_cycles: 0            # 跑满几周期后自动归零停; 0 = 一直跑
+    measurement: /motor_demo/angle_error
+    control:     /motor_demo/target_velocity
+    kp: 2.0           # 抖就降、到位太慢就升
+    ki: 0.0
+    kd: 0.0
+    output_min: -5.0
+    output_max: 5.0
+    integral_min: 0.0
+    integral_max: 0.0
 
 motor_velocity_filter:
   ros__parameters:
-    median_window: 5          # ★中值窗口(奇数 3/5/7)：砍测速偶发尖刺；越大越钝
-    cutoff_frequency: 10.0    # 低通截止(Hz)：毛刺多就再降(8/6)，太钝则回调并降kp
-    sampling_frequency: 1000.0  # 必须等于 update_rate
+    median_window: 5          # 中值窗口(奇数)：砍测速尖刺
+    cutoff_frequency: 10.0    # 低通截止(Hz)
+    sampling_frequency: 1000.0
 
-motor_speed_pid_controller:      # 内环(速度环)：目标速度 → 扭矩
+motor_speed_pid_controller:   # 内环：目标速度 → 扭矩
   ros__parameters:
-    measurement: /motor_demo/motor/velocity_filtered   # 反馈：滤波后测速(rad/s)
-    setpoint:    /motor_demo/target_velocity           # 目标：CommandModeController 出的目标速度
-    control:     /motor_demo/motor/control_torque      # 输出：扭矩(N·m)给电机
-    kp: 0.4            # P：误差→力（太小推不动）
-    ki: 0.1            # I：消静摩擦/残余误差
-    kd: 0.0            # D：测速有噪声先不加
-    output_min: -1.0   # 扭矩限幅 N·m
+    measurement: /motor_demo/motor/velocity_filtered   # 反馈(中值+低通后)
+    setpoint:    /motor_demo/target_velocity           # 目标：外环输出的目标速度
+    control:     /motor_demo/motor/control_torque      # 输出扭矩给电机
+    kp: 0.4
+    ki: 0.1
+    kd: 0.0
+    output_min: -1.0
     output_max: 1.0
-    integral_min: -0.5  # ★积分限幅要放开，否则 ki 不生效(被夹到0)
+    integral_min: -0.5
     integral_max: 0.5
 
 value_broadcaster:
   ros__parameters:
-    # 下面这组在 angle/velocity/torque 三模式下都存在，可不动。
-    # angle 模式想叠图比对目标角：把 target_angle / angle_error 两行取消注释。
-    # ★torque 模式：没有 target_velocity，把这行注释掉再启动。
     forward_list: [
-      "/motor_demo/target_velocity",         # 目标速度(angle/velocity 模式; torque 无)
-      # "/motor_demo/target_angle",          # 目标角度(angle 模式才开)
-      # "/motor_demo/angle_error",           # 角度误差(angle 模式才开)
+      "/motor_demo/target_velocity",         # 外环输出=内环目标速度
+      "/motor_demo/target_angle",            # 目标角度(抬升值,与angle叠图)
+      "/motor_demo/angle_error",             # 角度误差(优弧卷绕后)
       "/motor_demo/motor/angle",             # 当前角度(多圈连续)
       "/motor_demo/motor/velocity",          # 原始测速
       "/motor_demo/motor/torque",            # 原始扭矩
       "/motor_demo/motor/max_torque",        # 电机扭矩上限
-      "/motor_demo/motor/velocity_filtered", # 滤波后测速
+      "/motor_demo/motor/velocity_filtered", # 中值+低通后测速
       "/motor_demo/motor/control_torque",    # 给电机的扭矩
     ]
+
+# ---------- 扩展参数块(切回 CommandModeController 时取消注释) ----------
+# motor_command_mode:
+#   ros__parameters:
+#     mode: angle                # angle | velocity | torque
+#     angle: 1.0
+#     velocity: 3.0
+#     torque: 0.5
+#     angle_kp: 2.0
+#     angle_velocity_max: 5.0
+#     velocity_waveform: square     # none | square | sine
+#     waveform_amplitude: 1.0
+#     waveform_frequency_hz: 0.2
+#     waveform_cycles: 0
+
