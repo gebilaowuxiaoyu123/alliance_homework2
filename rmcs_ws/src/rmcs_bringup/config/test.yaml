@@ -1,10 +1,12 @@
 # ============================================================================
-# 任务二 · 电机驱动演示启动配置
+# 任务三 · 电机驱动演示启动配置（双环角度闭环）
 # 启动：ros2 launch rmcs_bringup rmcs.launch.py robot:=test
-# 数据流（速度闭环）：
-#   摇杆左杆y → JoystickVelocityMapping → /motor_demo/target_velocity (目标速度)
-#   电机回报 → /motor_demo/motor/velocity → VelocityFilter → 滤波后(当PID反馈)
-#   PID: error=setpoint-measurement → /motor_demo/motor/control_torque → 电机
+# 数据流：
+#   ros2 topic pub /motor_demo/angle_cmd <rad> → AngleTargetController
+#      → 优弧误差 /motor_demo/angle_error
+#      → 外环 ErrorPidController(角度) → /motor_demo/target_velocity
+#      → 内环 PidController(速度) → /motor_demo/motor/control_torque → 电机
+#   （任务二摇杆版在下方注释保留）
 # ============================================================================
 rmcs_executor:
   ros__parameters:
@@ -13,11 +15,17 @@ rmcs_executor:
       # 硬件层：跟电机/遥控说话（test.cpp）
       - rmcs_core::hardware::MotorTest -> motor_test_hardware
 
-      # 软件层：摇杆→目标速度、测速低通滤波
-      - rmcs_core::controller::motor_demo::JoystickVelocityMapping -> motor_joystick_mapping
+      # 角度指令桥(任务三)：订阅外部 /motor_demo/angle_cmd → 输出优弧角度误差
+      - rmcs_core::controller::motor_demo::AngleTargetController -> motor_angle_target
+      # - rmcs_core::controller::motor_demo::JoystickVelocityMapping -> motor_joystick_mapping  # (任务二摇杆备用)
+
+      # 测速低通滤波（内环测量前置）
       - rmcs_core::controller::motor_demo::VelocityFilter -> motor_velocity_filter
 
-      # 闭环：复用现成 PID
+      # 外环(角度环)：复用仓库 ErrorPidController —— 角度误差 → 目标速度
+      - rmcs_core::controller::pid::ErrorPidController -> motor_angle_pid_controller
+
+      # 内环(速度环)：复用仓库 PidController —— 速度误差 → 扭矩
       - rmcs_core::controller::pid::PidController -> motor_speed_pid_controller
 
       # 观测：把内部 double 转发成真实 ROS2 话题（Foxglove / ros2 topic echo 可见）
@@ -28,10 +36,21 @@ motor_test_hardware:
     # CBoard 的 USB 序列号（lsusb -v 看到的 iSerial），不是路径！
     board_serial: "D4-6A83-030D-F3D0-9103-F8A5-1246"
 
-motor_joystick_mapping:
+# motor_joystick_mapping:     # （任务二摇杆版，停用）
+#   ros__parameters:
+#     max_velocity: 3.0
+
+motor_angle_pid_controller:   # 外环：角度误差(rad) → 目标速度(rad/s)
   ros__parameters:
-    # 保护：先限到低速验证（M3508 空载额定约 40+ rad/s，先给 5 起步）
-    max_velocity: 3.0   # 摇杆推满→目标3 rad/s。先别给5，力更可控
+    measurement: /motor_demo/angle_error
+    control:     /motor_demo/target_velocity
+    kp: 2.0           # 角度→速度增益：先保守；抖就降、到位太慢就升
+    ki: 0.0
+    kd: 0.0
+    output_min: -5.0  # 目标速度上限(rad/s)，别让电机飞
+    output_max: 5.0
+    integral_min: 0.0
+    integral_max: 0.0
 
 motor_velocity_filter:
   ros__parameters:
@@ -43,20 +62,20 @@ motor_speed_pid_controller:
     measurement: /motor_demo/motor/velocity_filtered   # 反馈：滤波后测速(rad/s)
     setpoint:    /motor_demo/target_velocity           # 目标：摇杆映射出的速度
     control:     /motor_demo/motor/control_torque      # 输出：扭矩(N·m)给电机
-    kp: 0.4            # P：误差→力。太小推不动(0.02实测不转)，0.4 推满有 0.4×上限 的力
-    ki: 0.1            # I：消除静摩擦/残余误差，慢速也能顶到位
-    kd: 0.0            # D：测速有噪声先不加，抖了再说
-    # 保护：扭矩限幅先收窄到 ±1 N·m（M3508 满幅≈6 N·m），调稳前别给大扭矩
-    output_min: -1.0
+    kp: 0.4            # P：误差→力（太小推不动）
+    ki: 0.1            # I：消静摩擦/残余误差，到位靠它
+    kd: 0.0            # D：测速有噪声先不加
+    output_min: -1.0   # 扭矩限幅 N·m
     output_max: 1.0
-    integral_min: 0.0
-    integral_max: 0.0
+    integral_min: -0.5  # ★积分限幅要放开，否则 ki 不生效(被夹到0)
+    integral_max: 0.5
 
 value_broadcaster:
   ros__parameters:
     forward_list: [
-      "/motor_demo/target_velocity",         # 摇杆目标速度
-      "/motor_demo/motor/angle",             # 当前角度
+      "/motor_demo/target_velocity",         # 外环输出=内环目标速度
+      "/motor_demo/angle_error",             # 角度误差(优弧卷绕后)
+      "/motor_demo/motor/angle",             # 当前角度(多圈连续)
       "/motor_demo/motor/velocity",          # 原始测速
       "/motor_demo/motor/torque",            # 原始扭矩
       "/motor_demo/motor/max_torque",        # 电机扭矩上限

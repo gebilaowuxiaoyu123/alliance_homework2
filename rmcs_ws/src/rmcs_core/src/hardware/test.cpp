@@ -40,10 +40,12 @@ public:
         , motor_(*this, *command_, "/motor_demo/motor")
         , dr16_{} {
         // 1) 配置电机：M3508, id=3。可选链：
-        //    .set_reversed()          电机转反了再加
-        //    .enable_multi_turn_angle()  需要累计多圈角度再加
+        //    .set_reversed()           任务二实测转向已对 → 保留
+        //    .enable_multi_turn_angle() ★任务三必需：单圈角度 2π↔0 会跳变，角度环会追着绕圈
         motor_.configure(
-            device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3}.set_reversed());
+            device::DjiMotor::Config{device::DjiMotor::Type::kM3508, 3}
+                .set_reversed()
+                .enable_multi_turn_angle());
 
         // 2) 打开板子（串口名来自 yaml 的 board_serial 参数）
         board_ = std::make_unique<librmcs::board::CBoard>(
