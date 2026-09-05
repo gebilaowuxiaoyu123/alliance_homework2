@@ -56,8 +56,10 @@ value_broadcaster:
   ros__parameters:
     forward_list: [
       "/motor_demo/target_velocity",         # 摇杆目标速度
-      "/motor_demo/motor/angle",             # 当前角度(判方向用)
+      "/motor_demo/motor/angle",             # 当前角度
       "/motor_demo/motor/velocity",          # 原始测速
+      "/motor_demo/motor/torque",            # 原始扭矩
+      "/motor_demo/motor/max_torque",        # 电机扭矩上限
       "/motor_demo/motor/velocity_filtered", # 滤波后测速
       "/motor_demo/motor/control_torque",    # 给电机的扭矩
     ]
