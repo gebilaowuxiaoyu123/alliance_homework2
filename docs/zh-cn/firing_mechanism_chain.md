@@ -312,8 +312,9 @@ flowchart TB
 | `rmcs_core/src/hardware/test.cpp` | 新增(我方) | 硬件组件 `MotorTest`：**CBoard + M3508(CAN1,id3) + DR16**。仿现有车文件骨架（主/伙伴组件解环） | 任务二 + 任务三(加多圈) |
 | `rmcs_core/src/controller/motor_demo/joystick_velocity_mapping.cpp` | 新增(我方) | 组件：左摇杆 y → `/motor_demo/target_velocity`（摇杆断连输出 0，安全） | 任务二 |
 | `rmcs_core/src/controller/motor_demo/velocity_filter.cpp` | 新增(我方) | 组件：测速一阶低通 → `/motor_demo/motor/velocity_filtered` | 任务二 |
-| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 `/motor_demo/angle_error`，并把目标角广播成 `/motor_demo/target_angle` 供叠图比对 | 任务三 |
-| `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：把上面组件 + 现成 PID 串起来；含 `ValueBroadcaster` 观测 | 任务二/三 |
+| `rmcs_core/src/controller/motor_demo/angle_target_controller.cpp` | 新增(我方) | 组件：订阅外部 `/motor_demo/angle_cmd` → 算**优弧**误差 `/motor_demo/angle_error`，并把目标角广播成 `/motor_demo/target_angle` 供叠图比对 | 任务三(经典版) |
+| `rmcs_core/src/controller/motor_demo/command_mode_controller.cpp` | 新增(我方) | 组件 `CommandModeController`：yaml `mode` 一键切 **angle/velocity/torque** + 设固定目标；angle 内置外环P；可被外部 cmd topic 覆盖 | 扩展(模式切换) |
+| `rmcs_bringup/config/test.yaml` | 新增(我方) | **总接线**：上面组件 + 现成 PID 串起来；含三模式切换段 `motor_command_mode` 与 `ValueBroadcaster` 观测 | 任务二/三/模式切换 |
 | `rmcs_core/plugins.xml` | 改动(**官方唯一**) | 登记新组件（RMCS 加载必需） | 任务二/三 |
 
 **复用的现成组件**（没重写）：`PidController`/`ErrorPidController`（PID）、`filter::LowPassFilter`（滤波）、`device::RemoteControl`/`Dr16`（遥控）、`broadcaster::ValueBroadcaster`（内部→ROS2 话题，给 Foxglove/`ros2 topic` 用）。
@@ -388,8 +389,31 @@ flowchart LR
 6. `plugins.xml` 是加载组件的唯一入口，加了组件必须去登记
 7. executor 报 `Serial number read failed / No compatible device`，或板子直接不枚举 → **断电重启板子主电源**（CBoard 是外部供电，只拔 USB 不会让 MCU 复位，USB 协议栈会一直卡死；断电等 10s 再上电 → 重插 USB → `fix_usb.sh`）
 8. Foxglove 端口(8765)开着但看不到话题 → 旧 foxglove 进程 DDS 会话已脱节（进程在但不参与当前 ROS2 图），干净重启 foxglove_bridge 即可
+9. 频繁 `kill -9` 重启 executor（尤其电机在跑时）→ 板子 CAN 会话卡死：executor 正常、指令在发、但电机不动且力矩反馈 0 → **优先用 Ctrl+C 优雅停机**再重启一般自愈；不行再断电重启板子
+10. torque(直驱)模式是开环：给空载电机恒定力矩会一直加速到飞转 ⚠️ → 空载别用大值，玩小力矩+手随时能断电；默认配置已改回 angle 闭环(安全)
 
 ## 7. 验证结果（真机）
 - 任务二：摇杆推 → 电机跟转、回中停、滤波平滑 → 通 ✅
 - 任务三：启动锁当前角不动 → `ros2 topic pub -1 /motor_demo/angle_cmd ..."{data: 1.5}"` → 走优弧到位、误差收敛 → 再发 -2.0/0.5/3.0 连续跟踪 → 通 ✅
 - 已知现象：外环纯 P(ki=0) + 电机静摩擦 → 到位后留 ~0.1 rad 稳态误差（正常，P 控制特性）；要收紧就给外环加 ki(如 0.1) + 积分限幅 ±1（需重启 executor）
+
+## 8. 扩展：yaml 一键切 角度/速度/力矩 三模式
+
+### 8.1 怎么用（全在 `test.yaml`，改完重启 executor）
+- 切模式：`motor_command_mode` 段把 `mode:` 改成 `angle` / `velocity` / `torque`
+- 设目标：同段改 `angle`(rad) / `velocity`(rad/s) / `torque`(N·m)
+- ★torque 模式：`components` 里【速度PID】那行要注释掉（直驱绕过PID，否则两组件抢写 `control_torque` 启动报错）
+- 外部覆盖（yaml 值=开机默认，发 topic 即实时改目标）：`/motor_demo/angle_cmd`、`/motor_demo/velocity_cmd`、`/motor_demo/torque_cmd`
+- Foxglove 叠图：angle 模式把 `forward_list` 里 `target_angle` / `angle_error` 两行取消注释
+
+### 8.2 原理
+`CommandModeController` 构造时按 `mode` 只注册该模式需要的输出：
+- `angle`：读当前角 → 优弧误差 → 内置外环P(`angle_kp`) → `target_velocity`(交内环PID) ＋ 广播 `target_angle`/`angle_error`
+- `velocity`：直接出固定 `target_velocity`(交内环PID)
+- `torque`：直接出 `control_torque`(绕过所有PID，**开环**，无速度限制)
+
+### 8.3 真机验证（2026-09-05）
+- velocity：设 3.0 → 滤波测速稳在 2.9996 ✅；`velocity_cmd=-1/0` 实时反转/停机 ✅
+- angle：设 1.0 → 电机走优弧到位(残余~0.11，同经典P) ✅
+- torque：设 0.5 → 电机持续加速(空载飞转=正常开环表现) ✅；`torque_cmd=0` 停机 ✅
+- ⚠️ 安全默认 = angle(闭环锁位不飞转)；torque 需人为注释速度PID + 小力矩 + 手随时断电
