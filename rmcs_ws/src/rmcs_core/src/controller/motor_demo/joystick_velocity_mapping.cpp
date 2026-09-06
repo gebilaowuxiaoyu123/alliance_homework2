@@ -1,10 +1,3 @@
-// ============================================================================
-// 任务二软件层组件①：左摇杆 y 轴 → 目标角速度
-//   读 /remote/joystick/left (Eigen::Vector2d, y∈[-1,1])
-//   出 /motor_demo/target_velocity (double, 单位 rad/s)
-//   参数 max_velocity: 摇杆满量程对应的最大角速度
-// ============================================================================
-
 #include <eigen3/Eigen/Core>
 #include <rclcpp/node.hpp>
 #include <rclcpp/node_options.hpp>
@@ -27,7 +20,7 @@ public:
     }
 
     void update() override {
-        // 遥控断开(.ready()==false)时输出 0，安全
+        // 摇杆未连接/断连时输出 0
         *target_velocity_ = joystick_.ready() ? joystick_->y() * max_velocity_ : 0.0;
     }
 
