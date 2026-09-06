@@ -405,14 +405,10 @@ flowchart LR
 2. `motor_command_mode` 段：`mode: velocity`，`velocity_waveform: square/sine/none` 选激励。
 然后 `colcon build --packages-select rmcs_bringup`（只改了 yaml 也得重编一次把它拷进 install）→ `ros2 launch rmcs_bringup rmcs.launch.py robot:=test`。
 
-### 3.5 实测截图（任务二·速度闭环压测）
-**速度方波 ±1.5 rad/s**（黄色 `target_velocity` 台阶；蓝色 `velocity` 围着目标抖、橙色 `velocity_filtered` 平滑贴住；右图是速度模式下 `angle/target_angle` 占位重合）：
+### 3.5 实测截图（任务二·速度模式）
+**速度模式 · 速度方波 ±1.5 rad/s**（黄=`target_velocity` 台阶、蓝=`velocity` 原始抖动、橙=`velocity_filtered` 平滑贴住；右图为速度模式下 `angle`/`target_angle` 占位重合，**非角度控制**）：
 
-![任务二·速度方波压测（Foxglove）](assets/foxglove_velocity_square.png)
-
-**速度正弦 ±1.5 rad/s @0.2Hz**（平滑正弦也能跟住；右图实际角随速度积分缓慢游走、与占位 `target_angle` 完全重合——**注意：这是速度模式，不是角度控制**）：
-
-![任务二·速度正弦跟踪（Foxglove）](assets/foxglove_velocity_sine.png)
+![任务二·速度模式·方波压测（Foxglove）](assets/foxglove_velocity_square.png)
 
 > 印证：原始测速尖刺(瞬时 ~3.4)在滤波后只剩 ~1.13 的平滑段 → 中值+低通有效；滤波速度贴住目标 → 内环带宽够。
 
@@ -457,6 +453,11 @@ ros2 topic pub -1 /motor_demo/angle_cmd std_msgs/msg/Float64 "{data: 1.5}"
 # 再看已到位（angle≈1.5、error≈0），发 -1.0 走短弧回来
 ros2 topic pub -1 /motor_demo/angle_cmd std_msgs/msg/Float64 "{data: -1.0}"
 ```
+
+### 4.6 实测截图（任务三·角度模式）
+**角度模式 · 目标角正弦跟踪**（外部按正弦发 `angle_cmd`：右图 `angle`(绿) 与 `target_angle`(蓝) **贴合**、`angle_error` 收敛在 0 附近；左图蓝=电机转速、橙=`velocity_filtered`、黄=外环给出的 `target_velocity`）：
+
+![任务三·角度模式·正弦跟踪（Foxglove）](assets/foxglove_angle_sine.png)
 
 ## 5. test.yaml 测试模式切换大全（速查）
 

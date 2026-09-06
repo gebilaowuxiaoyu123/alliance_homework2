@@ -23,13 +23,13 @@
 
 **演示效果（Foxglove 实采）**
 
-速度方波 ±1.5 rad/s：黄色目标、蓝色原始测速、橙色滤波后速度贴住目标
+**速度模式** · 速度方波 ±1.5 rad/s：黄=目标速度、蓝=原始测速、橙=滤波后贴住目标
 
-![速度方波压测](docs/zh-cn/assets/foxglove_velocity_square.png)
+![速度模式·方波压测](docs/zh-cn/assets/foxglove_velocity_square.png)
 
-速度正弦 ±1.5 rad/s @0.2Hz 平滑跟踪
+**角度模式** · 目标角按正弦变化，实际角一路贴住目标角
 
-![速度正弦跟踪](docs/zh-cn/assets/foxglove_velocity_sine.png)
+![角度模式·正弦跟踪](docs/zh-cn/assets/foxglove_angle_sine.png)
 
 ## 实验硬件
 
