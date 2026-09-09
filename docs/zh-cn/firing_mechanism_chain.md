@@ -470,10 +470,12 @@ ros2 topic pub -1 /motor_demo/angle_cmd std_msgs/msg/Float64 "{data: -1.0}"
 | **速度·固定** | 放开 B 行 / 注释 A 两行 | `motor_command_mode.mode: velocity, velocity_waveform: none, velocity: 2.0` | velocity_filtered 贴 target_velocity |
 | **速度·方波/正弦** | 同上 | `velocity_waveform: square/sine` + `waveform_amplitude/frequency_hz` | 同上，目标形状自选 |
 | **速度·外部覆盖** | 同上 | `velocity_waveform: none`（覆盖只在 none 生效） | 发 `velocity_cmd` 实时改目标 |
+| **速度·遥控摇杆(DR16)** | 放开 C 行 / 注释 A 两行 + B 行（★需接遥控器） | `motor_joystick_mapping.max_velocity` | velocity_filtered 贴 target_velocity；摇杆未连输出 0 |
 | **力矩·直驱(开环!)** | 放开 B 行 **且注释内环 PID 行** | `motor_command_mode.mode: torque, torque: 0.3` | motor/velocity 持续加速=开环表现 |
 
 要点/坑：
-- **A/B 不能同时开**：方案A 外环和方案B 源都会写 `target_velocity`，同时开 = 双写冲突启动报错。
+- **A/B/C 只开一个**：角度外环 / 方案B / 方案C 源都会写 `target_velocity`，同时开 = 双写冲突启动报错。
+- **遥控(方案C)**：`test.cpp` 已接 DR16 并发布 `/remote/joystick/left`，`JoystickVelocityMapping` 已登记。**当前无遥控器 → C 默认注释**；没遥控时该源恒输出 0（安全，不飞转）。
 - **torque 是开环**：恒定力矩会一直加速到飞转 ⚠️，空载只玩小值（≤0.5）+ 手随时断电；测完切回方案A。
 - **只改参数**也要重编 bringup（yaml 会被拷进 `install/`），否则还是旧配置。
 

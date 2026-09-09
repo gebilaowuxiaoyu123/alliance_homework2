@@ -2,14 +2,18 @@
 # RMCS 电机演示 —— 外环/内环各成独立 PID 块，测试切换只动 components 两行
 #   启动：ros2 launch rmcs_bringup rmcs.launch.py robot:=test
 #
-# ═══════ 两套测试方案 ═══════
+# ═══════ 三套测试方案（目标速度只允许一个源在写）═══════
 # 【A·角度】(默认开)：
 #   AngleTargetController(角度源：方波/外部 angle_cmd)
 #      → motor_angle_pid_controller(★外环PID, 独立块) → 内环
 #   Foxglove 看 angle 追 target_angle；调外环块 kp/ki
-# 【B·速度】：
-#   components 注释掉 A 两行(AngleTarget+外环)，放开 CommandMode 那行
+# 【B·速度·yaml 波形】(免遥控)：
+#   components 注释掉 A 两行、放开 CommandMode 那行
 #   → 用 motor_command_mode 段(速度固定/方波/正弦)；调 motor_speed_pid_controller
+# 【C·速度·遥控】(DR16 摇杆, ★需接遥控器)：
+#   components 放开 JoystickVelocityMapping 那行、注释 A 两行 + B 行
+#   → 推左摇杆 y → 目标速度；摇杆未连接/断连时输出 0(安全)
+#   ⚠️ 目前没有遥控器 → C 默认注释，别开 C(没遥控 = 目标恒 0 电机不动)
 #   （其余组件 + value_broadcaster 都不用动）
 # ============================================================================
 rmcs_executor:
@@ -21,8 +25,10 @@ rmcs_executor:
       # ═══ 方案A·角度(默认开)：角度源 + 外环PID(锁角/angle_cmd/角度方波) ═══
       - rmcs_core::controller::motor_demo::AngleTargetController -> motor_angle_target
       - rmcs_core::controller::pid::ErrorPidController -> motor_angle_pid_controller
-      # ═══ 方案B·速度：放开下面这行 + 注释上面 A 两行(避免抢 target_velocity) ═══
+      # ═══ 方案B·速度(yaml 波形)：放开这行 + 注释上面 A 两行 ═══
       # - rmcs_core::controller::motor_demo::CommandModeController -> motor_command_mode
+      # ═══ 方案C·速度(遥控 DR16 摇杆, ★需接遥控器)：放开这行 + 注释 A 两行 + B 行 ═══
+      # - rmcs_core::controller::motor_demo::JoystickVelocityMapping -> motor_joystick_mapping
 
       - rmcs_core::controller::motor_demo::VelocityFilter -> motor_velocity_filter
       - rmcs_core::controller::pid::PidController -> motor_speed_pid_controller   # 内环
@@ -64,6 +70,11 @@ motor_command_mode:
     waveform_amplitude: 1.5     # 方波±幅值 / 正弦幅值(rad/s)
     waveform_frequency_hz: 0.2  # 频率Hz：方波半周期=0.5/f，正弦周期=1/f
     waveform_cycles: 0
+
+# —— 速度源·遥控(方案C·DR16 摇杆, ★需接遥控器)：左摇杆 y → 目标速度 ——
+motor_joystick_mapping:
+  ros__parameters:
+    max_velocity: 3.0   # 摇杆满量程对应最大速度(rad/s)
 
 motor_velocity_filter:
   ros__parameters:

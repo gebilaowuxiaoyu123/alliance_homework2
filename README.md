@@ -43,7 +43,7 @@
 
 - **主控**：CBoard（USB 串口，序列号在 `rmcs_ws/src/rmcs_bringup/config/test.yaml` 的 `board_serial` 配置）
 - **电机**：M3508 ×1，CAN1 总线，拨码 id = 3（已开多圈角度、反向修正）
-- **遥控**：DR16（任务二早期摇杆验证用；后续测试改为 yaml / 外部 topic 驱动，不再依赖遥控）
+- **遥控**：DR16（已在 `test.cpp` 接入并发布 `/remote/joystick/*`；可选作「速度源·摇杆」= yaml 方案C，见[测试模式切换](#测试模式切换)。⚠️ **当前没有遥控器**，故方案 C 默认注释）
 - **观测**：Foxglove WebSocket 桥（端口 8765），浏览器实时看曲线
 
 ## 环境与快速开始
@@ -99,7 +99,10 @@ docs/zh-cn/assets/                        # 真机截图等
 | 角度·外部 `angle_cmd`（默认，安全） | 方案 A 开 | `motor_angle_target.angle_waveform: none` |
 | 角度·方波压外环 | 方案 A 开 | `angle_waveform: square` + 外环 `motor_angle_pid_controller.kp/ki` |
 | 速度·固定/方波/正弦 | 方案 B 开（注释 A 两行） | `motor_command_mode.mode: velocity, velocity_waveform: ...` |
+| 速度·遥控摇杆(DR16) | 方案 C 开（注释 A 两行 + B 行）★需接遥控器 | `motor_joystick_mapping.max_velocity` |
 | 力矩·直驱（开环⚠️） | 方案 B + 注释内环 PID 行 | `mode: torque, torque: 小值` |
+
+> 遥控(DR16) 用法：`test.cpp` 已接入 DR16 并发布 `/remote/joystick/left`，`JoystickVelocityMapping` 组件已登记。要用手柄测任务二：yaml 里放开方案 C 那行即可；摇杆未连接/断连时该源输出 0（安全）。**当前无遥控器，方案 C 默认注释。**
 
 ## 真机验证结果
 
